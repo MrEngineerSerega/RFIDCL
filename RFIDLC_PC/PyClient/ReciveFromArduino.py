@@ -26,5 +26,5 @@ def DetectingArduino():
 ser = serial.Serial(DetectingArduino(), 115200, timeout=1)
 
 while True:
-    print(ser.readline().decode(), end='')
+    print(ser.readline())
     time.sleep(0.1)
