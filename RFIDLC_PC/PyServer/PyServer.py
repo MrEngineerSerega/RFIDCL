@@ -8,21 +8,19 @@ from tornado.options import options, define
 define("port", default=8888, help="TCP port to listen on")
 logging.basicConfig(
     level=logging.DEBUG,
-    format='%(asctime)s [%(levelname)s] (%(processName)-10s) %(message)s'
+    format='%(asctime)s [%(levelname)s] %(message)s'
 )
 
 
 class EchoServer(TCPServer):
     @gen.coroutine
     def handle_stream(self, stream, address):
+        clientIP = address[0]
+        logging.info("%s has been connected", clientIP)
         while True:
             try:
-                data = yield stream.read_until(b"\n")
-                clientIP = address[0]
                 data = yield stream.read_until(b"\r\n")
                 logging.info("Received bytes from %s: %s" % (clientIP, data))
-                if not data.endswith(b"\n"):
-                    data = data + b"\n"
                 if not data.endswith(b"\r\n"):
                     data = data + b"\r\n"
                 yield stream.write(data)

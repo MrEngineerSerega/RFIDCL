@@ -8,7 +8,6 @@ import logging
 from tornado.ioloop import IOLoop
 from tornado import gen
 from tornado.tcpclient import TCPClient
-from tornado.options import options, define
 
 logging.basicConfig(
     level=logging.DEBUG,
@@ -20,21 +19,19 @@ def DetectingArduino():
     portsAvalible = []
     for port in stports:
         portsAvalible.append(port.device)
-    logging.info(portsAvalible)
+    logging.debug("Avalible ports: %s", ", ".join(portsAvalible))
 
     for port in portsAvalible:
-        logging.info(port)
         serSP = serial.Serial(port, 115200, timeout=1)
         time.sleep(2)
         serSP.write(b'RFIDSDetect')
         mess = serSP.readline()
         if mess.decode() == "GOOD\r\n":
-            logging.info("GoodPort")
+            logging.info("%s is a good port", port)
             return port
         else:
-            logging.info("BadPort")
+            logging.debug("%s is a bad port", port)
 
-message = input()
 
 @gen.coroutine
 def send_message():
@@ -44,10 +41,9 @@ def send_message():
         if arduinoRecive.decode() != "":
             message = arduinoRecive
             yield stream.write(message)
-            print("Sent to server:", message)
-            reply = yield stream.read_until(b"\n")
-            print("Response from server:", reply.decode().strip())
+            logging.info("Sent to server: %s", message)
             reply = yield stream.read_until(b"\r\n")
+            logging.info("Response from server: %s", reply.decode().strip())
 
 
 ser = serial.Serial(DetectingArduino(), 115200, timeout=1)
