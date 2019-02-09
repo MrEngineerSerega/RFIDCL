@@ -47,6 +47,7 @@ def send_message():
             print("Sent to server:", message)
             reply = yield stream.read_until(b"\n")
             print("Response from server:", reply.decode().strip())
+            reply = yield stream.read_until(b"\r\n")
 
 
 ser = serial.Serial(DetectingArduino(), 115200, timeout=1)

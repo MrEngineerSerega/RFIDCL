@@ -19,9 +19,12 @@ class EchoServer(TCPServer):
             try:
                 data = yield stream.read_until(b"\n")
                 clientIP = address[0]
+                data = yield stream.read_until(b"\r\n")
                 logging.info("Received bytes from %s: %s" % (clientIP, data))
                 if not data.endswith(b"\n"):
                     data = data + b"\n"
+                if not data.endswith(b"\r\n"):
+                    data = data + b"\r\n"
                 yield stream.write(data)
             except StreamClosedError:
                 logging.warning("Lost client at host %s", address[0])
