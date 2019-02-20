@@ -44,21 +44,26 @@ def send_message():
     RSACipher = PKCS1_OAEP.new(RSAPrivateKey)
     sesionKey = RSACipher.decrypt(encSessionKey)
 
-    EncAESCipher = AES.new(sesionKey, AES.MODE_EAX)
-    nonce = EncAESCipher.nonce
-    DecAESCipher = AES.new(sesionKey, AES.MODE_EAX, nonce = nonce)
     while True:
-        arduinoRecive = ser.readline()
+        encAESCipher = AES.new(sesionKey, AES.MODE_EAX)
+
+        arduinoRecive = ser.readline().replace(b'\r\n', b'')
         if arduinoRecive.decode() != "":
-            encMessage, tag = EncAESCipher.encrypt_and_digest(arduinoRecive)
-            yield stream.write(encMessage + b'\r\n')
-            logging.info("Sent to server: %s", encMessage + b'\r\n')
+            encMessage, encTag = encAESCipher.encrypt_and_digest(arduinoRecive)
+            yield stream.write(encAESCipher.nonce + b':' + encMessage + b':' + encTag + b'\r\n')
+            logging.info("Sent to server: %s", encAESCipher.nonce + b':' + encMessage + b':' + encTag + b'\r\n')
             encResponse = yield stream.read_until(b"\r\n")
             encResponse = encResponse.replace(b'\r\n', b'')
             logging.info("Response from server: %s", encResponse)
-            response = DecAESCipher.decrypt(encResponse)
-            logging.info(response)
-
+            decNonce, encMessage, decTag = encResponse.split(b':')
+            decAESCipher = AES.new(sesionKey, AES.MODE_EAX, nonce=decNonce)
+            decMessage = decAESCipher.decrypt(encMessage)
+            try:
+                decAESCipher.verify(decTag)
+                logging.info("Decrypted message: %s", decMessage)
+            except ValueError:
+                logging.error("Key incorrect or message corrupted")
+                continue
 
 
 

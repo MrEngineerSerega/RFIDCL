@@ -1,4 +1,5 @@
 import logging
+import sqlite3
 from tornado.ioloop import IOLoop
 from tornado import gen
 from tornado.iostream import StreamClosedError
@@ -25,23 +26,43 @@ class EchoServer(TCPServer):
             RSAExpPublicKey = yield stream.read_until(b"\r\n")
             RSAPublicKey = RSA.import_key(RSAExpPublicKey)
             logging.info("Received rsa public key from %s: %s" % (clientIP, RSAExpPublicKey))
-            sesionKey = get_random_bytes(32)
+            sesionKey = b':'
+            while b':' in sesionKey:
+                sesionKey = get_random_bytes(32)
             RSACipher = PKCS1_OAEP.new(RSAPublicKey)
             encSessionKey = RSACipher.encrypt(sesionKey)
             yield stream.write(encSessionKey + b'\r\n')
             logging.info("Sent to %s: %s" % (clientIP, encSessionKey))
+
             while True:
+                encAESCipher = AES.new(sesionKey, AES.MODE_EAX)
+
                 data = yield stream.read_until(b"\r\n")
+                data = data.replace(b'\r\n', b'')
                 logging.info("Received bytes from %s: %s" % (clientIP, data))
-                if not data.endswith(b"\r\n"):
-                    data = data + b"\r\n"
-                yield stream.write(data)
+                decNonce, encMessage, decTag = data.split(b':')
+                decAESCipher = AES.new(sesionKey, AES.MODE_EAX, nonce=decNonce)
+                decMessage = decAESCipher.decrypt(encMessage)
+                try:
+                    decAESCipher.verify(decTag)
+                    logging.info("Decrypted message: %s", decMessage)
+                except ValueError:
+                    logging.error("Key incorrect or message corrupted")
+                    yield stream.write(b"Key incorrect or message corrupted\r\n")
+                    continue
+
+                message = b'kek'
+                encMessage, encTag = encAESCipher.encrypt_and_digest(message)
+                yield stream.write(encAESCipher.nonce + b':' + encMessage + b':' + encTag + b'\r\n')
         except StreamClosedError:
             logging.warning("Lost client at host %s", clientIP)
-        # except Exception as e:
-        #     logging.error(e)
+        except Exception as e:
+            logging.error(e)
 
 if __name__ == "__main__":
+    db = sqlite3.connect("RFIDDataBase.db")
+    cursor = db.cursor()
+
     options.parse_command_line()
     server = EchoServer()
     server.listen(options.port)
