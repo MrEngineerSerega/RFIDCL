@@ -33,7 +33,6 @@ def DetectingArduino():
         else:
             logging.debug("%s is a bad port", port)
 
-
 @gen.coroutine
 def send_message():
     stream = yield TCPClient().connect("localhost", "8888")
@@ -50,12 +49,12 @@ def send_message():
         arduinoRecive = ser.readline().replace(b'\r\n', b'')
         if arduinoRecive.decode() != "":
             encMessage, encTag = encAESCipher.encrypt_and_digest(arduinoRecive)
-            yield stream.write(encAESCipher.nonce + b':' + encMessage + b':' + encTag + b'\r\n')
-            logging.info("Sent to server: %s", encAESCipher.nonce + b':' + encMessage + b':' + encTag + b'\r\n')
+            yield stream.write(encAESCipher.nonce + b' !@:@! ' + encMessage + b' !@:@! ' + encTag + b'\r\n')
+            logging.info("Sent to server: %s", encAESCipher.nonce + b' !@:@! ' + encMessage + b' !@:@! ' + encTag + b'\r\n')
             encResponse = yield stream.read_until(b"\r\n")
             encResponse = encResponse.replace(b'\r\n', b'')
             logging.info("Response from server: %s", encResponse)
-            decNonce, encMessage, decTag = encResponse.split(b':')
+            decNonce, encMessage, decTag = encResponse.split(b' !@:@! ')
             decAESCipher = AES.new(sesionKey, AES.MODE_EAX, nonce=decNonce)
             decMessage = decAESCipher.decrypt(encMessage)
             try:

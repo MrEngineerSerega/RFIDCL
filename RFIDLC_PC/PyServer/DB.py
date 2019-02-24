@@ -5,7 +5,7 @@ limit = input("лимит выборки")
 conn = sqlite3.connect("Chinook_Sqlite.sqlite")
 cursor = conn.cursor()
 
-cursor.execute("SELECT Name FROM Artist ORDER BY Name LIMIT 5")
+cursor.execute("SELECT ArtistId FROM Artist WHERE Name=:id", {"id": limit})
 results = cursor.fetchall()
 
 print(results)
