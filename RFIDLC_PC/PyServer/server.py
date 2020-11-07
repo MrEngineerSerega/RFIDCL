@@ -56,7 +56,11 @@ async def handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
     writer.write(b"ok")
     await writer.drain()
 
-    print(encryption.aes_decrypt(await reader.read(1024)))
+    while True:
+        data = encryption.aes_decrypt(await reader.read(4096)).decode()
+        if int(data[0]) == 0:
+            type, short_name, *key, level, hash = data.split(":")
+            print(type, short_name, key, level, hash, sep="\n")
 
     writer.close()
 

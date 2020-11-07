@@ -1,10 +1,111 @@
-import asyncio
+import socket
 import rsa
+import sqlite3
+import sys
+import hashlib
+from threading import Thread
+from functools import partial
 from Crypto.Cipher import AES
 from Crypto import Random
+from PyQt5 import uic
+from PyQt5.QtWidgets import *
+from PyQt5.QtGui import QMovie
 
 SERVER_IP = "localhost"
 SERVER_PORT = 8888
+
+
+class StartForm(QWidget):
+    def __init__(self):
+        super().__init__()
+        uic.loadUi("StartForm.ui", self)
+
+        anim = QMovie("media\waiting.gif")
+        self.label.setMovie(anim)
+        anim.start()
+
+        self.keys_exchange()
+
+    def keys_exchange(self):
+        sock = socket.socket()
+        sock.connect((SERVER_IP, SERVER_PORT))
+
+        encryption = Encryptor()
+        key, nonce = encryption.create_aes()
+
+        encryption.set_rsa_pub_key(sock.recv(1024))
+
+        sock.send(encryption.rsa_encrypt(key + nonce))
+
+        sock.recv(1024)
+
+        self.main_form = MainForm(sock, encryption)
+        self.main_form.show()
+        self.hide()
+
+
+class MainForm(QMainWindow):
+    def __init__(self, sock, encryption):
+        super().__init__()
+        self.sock = sock
+        self.encryption = encryption
+        uic.loadUi("MainForm.ui", self)
+
+        self.menuFile.addAction("Open")
+        self.menuFile.addAction("Open Recent")
+        self.menuFile.addAction("Save")
+        self.menuFile.addAction("Add File", self.add_file, "CTRL+N")
+        self.menuFile.addSeparator()
+        self.menuFile.addAction('Settings')
+        self.menuFile.addAction('Exit')
+
+    def add_file(self):
+        self.new_file = NewFileForm(self.sock, self.encryption)
+        self.new_file.show()
+
+
+class NewFileForm(QWidget):
+    def __init__(self, sock, encryption):
+        super().__init__()
+        self.sock = sock
+        self.encryption = encryption
+        uic.loadUi("NewFileForm.ui", self)
+
+        self.browsei_btn.clicked.connect(self.browsei)
+        self.browseo_btn.clicked.connect(self.browseo)
+        self.ok_btn.clicked.connect(self.ok)
+        self.cancel_btn.clicked.connect(self.hide)
+
+    def browsei(self):
+        filename = QFileDialog.getOpenFileName(self, "Выберите файл")[0]
+        self.input_edt.setText(filename)
+
+    def browseo(self):
+        filename = QFileDialog.getSaveFileName(self, "Сохранить",
+                                               filter="*.enc")[0]
+        self.output_edt.setText(filename)
+
+    def ok(self):
+        short_name = self.input_edt.text().split("/")[-1]
+        file_enc = Encryptor()
+        key = b"".join(file_enc.create_aes())
+        input = open(self.input_edt.text(), "rb")
+        encrypted_file = file_enc.aes_encrypt(input.read())
+        hash = hashlib.sha256(encrypted_file).hexdigest()
+        input.close()
+        data = b":".join((b"0",
+                          short_name.encode(),
+                          key,
+                          str(self.lvl_spin.value()).encode(),
+                          hash.encode()))
+        print(data)
+        enc = self.encryption.aes_encrypt(data)
+        print(enc)
+        self.sock.send(enc)
+
+        output = open(self.output_edt.text(), "wb")
+        output.write(encrypted_file)
+        output.close()
 
 
 class Encryptor:
@@ -42,27 +143,8 @@ class Encryptor:
         return self.aes.decrypt(data[:-16])
 
 
-async def main(loop):
-    reader, writer = await asyncio.open_connection(SERVER_IP, SERVER_PORT,
-                                                   loop = loop)
-
-    encryption = Encryptor()
-    key, nonce = encryption.create_aes()
-
-    encryption.set_rsa_pub_key(await reader.read(1024))
-
-    writer.write(encryption.rsa_encrypt(key + nonce))
-    await writer.drain()
-
-    await reader.read(1024)
-
-    writer.write(encryption.aes_encrypt(b"helloworld"))
-    await writer.drain()
-
-    writer.close()
-
-
 if __name__ == "__main__":
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(main(loop))
-    loop.close()
+    app = QApplication(sys.argv)
+    start_form = StartForm()
+    start_form.show()
+    app.exec_()
