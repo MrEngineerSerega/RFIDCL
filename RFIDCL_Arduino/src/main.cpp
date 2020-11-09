@@ -16,77 +16,58 @@
 #include <SPI.h>
 #include <MFRC522.h>
 
-#define RST_PIN		9		//
-#define SS_PIN		10		//
+#define RST_PIN		9
+#define SS_PIN		10
 
-char inData[20]; // Allocate some space for the string
-char inChar=-1; // Where to store the character read
-byte index = 0; // Index into array; where to store the character
-
-MFRC522 mfrc522(SS_PIN, RST_PIN);	// Create MFRC522 instance
+MFRC522 mfrc522(SS_PIN, RST_PIN);
+String UID;
 
 void setup() {
-    Serial.begin(115200);		// Initialize serial communications with the PC
-    while (!Serial);		// Do nothing if no serial port is opened (added for Arduinos based on ATMEGA32U4)
-    SPI.begin();			// Init SPI bus
-    mfrc522.PCD_Init();		// Init MFRC522
+    Serial.begin(115200);
+    SPI.begin();
+    mfrc522.PCD_Init();
 }
-
-char Comp(char* This) {
-    while (Serial.available() > 0) // Don't read unless
-                            // there you know there is data
-    {
-        if(index < 19) // One less than the size of the array
-        {
-            inChar = Serial.read(); // Read a character
-            inData[index] = inChar; // Store it
-            index++; // Increment where to write next
-            inData[index] = '\0'; // Null terminate the string
-        }
-    }
-
-    if (strcmp(inData,This)  == 0) {
-        for (int i=0;i<19;i++) {
-            inData[i]=0;
-        }
-        index=0;
-        return(0);
-    }
-    else {
-
-        return(1);
-    }
-}
-
 
 void loop() {
     if(Serial.available() > 0){
-        if (Comp("RFIDSDetect")==0) {
-            Serial.println("GOOD");
-        }
+      int data = Serial.parseInt();
+      if (data == 3) {
+        Serial.println("GOOD");
+      }else if(data == 1){
+        tone(4, 1000);
+        digitalWrite(2, HIGH);
+        delay(100);
+        noTone(4);
+        digitalWrite(2, LOW);
+        delay(50);
+        tone(4, 1000);
+        digitalWrite(2, HIGH);
+        delay(100);
+        noTone(4);
+        digitalWrite(2, LOW);
+      }else if(data == 2){
+        tone(4, 300);
+        digitalWrite(3, HIGH);
+        delay(1000);
+        noTone(4);
+        digitalWrite(3, LOW);
+      }
     }
 
-    // Look for new cards
     if ( ! mfrc522.PICC_IsNewCardPresent()) {
-        return;
+      return;
     }
 
-    // Select one of the cards
     if ( ! mfrc522.PICC_ReadCardSerial()) {
-        return;
+      return;
     }
 
-    mfrc522.PICC_UIDToSerial(&(mfrc522.uid));
-    // mfrc522.PICC_DumpToSerial(&(mfrc522.uid));
 
-    if(Serial.available() > 0){
-        if(Serial.readString() == "kek")
-        {
-            for (int i = 0; i < 10; i++){
-                Serial.println("GOOD");
-                delay(1000);
-            }
-        }
+    UID = "";
+    for (byte i = 0; i < mfrc522.uid.size; i++){
+      UID += String(mfrc522.uid.uidByte[i], HEX);
     }
+    Serial.println(UID);
+    mfrc522.PICC_HaltA();
 
 }
