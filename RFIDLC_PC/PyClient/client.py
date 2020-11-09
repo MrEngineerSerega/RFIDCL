@@ -3,16 +3,51 @@ import rsa
 import sqlite3
 import sys
 import hashlib
-from threading import Thread
 from functools import partial
 from Crypto.Cipher import AES
 from Crypto import Random
 from PyQt5 import uic
 from PyQt5.QtWidgets import *
 from PyQt5.QtGui import QMovie
+from PyQt5.QtCore import QThread, pyqtSignal
 
 SERVER_IP = "localhost"
 SERVER_PORT = 8888
+
+
+class Encryptor:
+    def __init__(self):
+        self.public_key = None
+        self.private_key = None
+        self.aes = None
+
+    def set_rsa_pub_key(self, key):
+        self.public_key = rsa.PublicKey.load_pkcs1(key)
+
+    def create_rsa_pair(self, size=512):
+        self.public_key, self.private_key = rsa.newkeys(size)
+        return self.public_key.save_pkcs1()
+
+    def rsa_encrypt(self, data: bytes):
+        return rsa.encrypt(data, self.public_key)
+
+    def rsa_decrypt(self, data: bytes):
+        return rsa.decrypt(data, self.private_key)
+
+    def create_aes(self, size=24):
+        key = Random.new().read(size)
+        self.aes = AES.new(key, AES.MODE_EAX)
+        return key, self.aes.nonce
+
+    def set_aes(self, key, nonce):
+        self.aes = AES.new(key, AES.MODE_EAX, nonce=nonce)
+
+    def aes_encrypt(self, data):
+        return b"".join(self.aes.encrypt_and_digest(data))
+
+    def aes_decrypt(self, data):
+        # self.aes.verify(tag)
+        return self.aes.decrypt(data[:-16])
 
 
 class StartForm(QWidget):
@@ -23,8 +58,25 @@ class StartForm(QWidget):
         anim = QMovie("media\waiting.gif")
         self.label.setMovie(anim)
         anim.start()
+        self.show()
 
-        self.keys_exchange()
+        self.loading = Loading()
+        self.loading.loaded.connect(self.draw_main_form)
+        self.loading.start()
+
+    def draw_main_form(self, sock, encryption):
+        self.main_form = MainForm(sock, encryption)
+        self.main_form.show()
+        self.hide()
+
+
+class Loading(QThread):
+    loaded = pyqtSignal(socket.socket, Encryptor)
+
+    def run(self):
+        sock, encryption = self.keys_exchange()
+
+        self.loaded.emit(sock, encryption)
 
     def keys_exchange(self):
         sock = socket.socket()
@@ -39,9 +91,7 @@ class StartForm(QWidget):
 
         sock.recv(1024)
 
-        self.main_form = MainForm(sock, encryption)
-        self.main_form.show()
-        self.hide()
+        return sock, encryption
 
 
 class MainForm(QMainWindow):
@@ -98,53 +148,14 @@ class NewFileForm(QWidget):
                           key,
                           str(self.lvl_spin.value()).encode(),
                           hash.encode()))
-        print(data)
-        enc = self.encryption.aes_encrypt(data)
-        print(enc)
-        self.sock.send(enc)
+        self.sock.send(self.encryption.aes_encrypt(data))
 
         output = open(self.output_edt.text(), "wb")
         output.write(encrypted_file)
         output.close()
 
 
-class Encryptor:
-    def __init__(self):
-        self.public_key = None
-        self.private_key = None
-        self.aes = None
-
-    def set_rsa_pub_key(self, key):
-        self.public_key = rsa.PublicKey.load_pkcs1(key)
-
-    def create_rsa_pair(self, size=512):
-        self.public_key, self.private_key = rsa.newkeys(size)
-        return self.public_key.save_pkcs1()
-
-    def rsa_encrypt(self, data: bytes):
-        return rsa.encrypt(data, self.public_key)
-
-    def rsa_decrypt(self, data: bytes):
-        return rsa.decrypt(data, self.private_key)
-
-    def create_aes(self, size=24):
-        key = Random.new().read(size)
-        self.aes = AES.new(key, AES.MODE_EAX)
-        return key, self.aes.nonce
-
-    def set_aes(self, key, nonce):
-        self.aes = AES.new(key, AES.MODE_EAX, nonce=nonce)
-
-    def aes_encrypt(self, data):
-        return b"".join(self.aes.encrypt_and_digest(data))
-
-    def aes_decrypt(self, data):
-        # self.aes.verify(tag)
-        return self.aes.decrypt(data[:-16])
-
-
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     start_form = StartForm()
-    start_form.show()
     app.exec_()

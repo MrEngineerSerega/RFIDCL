@@ -1,5 +1,6 @@
 import asyncio
 import rsa
+import sqlite3
 from Crypto.Cipher import AES
 from Crypto import Random
 
@@ -40,7 +41,7 @@ class Encryptor:
         # self.aes.verify(tag)
         return self.aes.decrypt(data[:-16])
 
-async def handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+async def handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter, *args):
     addr = writer.get_extra_info("peername")
     print("Incoming connection from: {}:{}".format(addr[0], addr[1]))
 
@@ -56,11 +57,25 @@ async def handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
     writer.write(b"ok")
     await writer.drain()
 
+    db_conn = sqlite3.connect("db.sqlite")
+    db_cursor = db_conn.cursor()
+
     while True:
-        data = encryption.aes_decrypt(await reader.read(4096)).decode()
-        if int(data[0]) == 0:
-            type, short_name, *key, level, hash = data.split(":")
-            print(type, short_name, key, level, hash, sep="\n")
+        data = encryption.aes_decrypt(await reader.read(4096))
+        if data:
+            if data[0] == "0".encode()[0]:
+                type, short_name, *key, level, hash = data.split(b":")
+                key = b"".join(key)
+
+                db_cursor.execute("INSERT INTO Files "
+                                  "(FileName, Hash, AccessLvl, Key) "
+                                  "VALUES (?, ?, ?, ?)",
+                                  (short_name.decode(),
+                                   hash.decode(),
+                                   level.decode(),
+                                   key))
+
+            db_conn.commit()
 
     writer.close()
 
