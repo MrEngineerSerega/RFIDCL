@@ -3,6 +3,10 @@ import rsa
 import sqlite3
 import sys
 import hashlib
+import time
+import os
+from serial import Serial
+from serial.tools import list_ports
 from functools import partial
 from Crypto.Cipher import AES
 from Crypto import Random
@@ -19,7 +23,7 @@ class Encryptor:
     def __init__(self):
         self.public_key = None
         self.private_key = None
-        self.aes = None
+        self.key = None
 
     def set_rsa_pub_key(self, key):
         self.public_key = rsa.PublicKey.load_pkcs1(key)
@@ -36,18 +40,20 @@ class Encryptor:
 
     def create_aes(self, size=24):
         key = Random.new().read(size)
-        self.aes = AES.new(key, AES.MODE_EAX)
-        return key, self.aes.nonce
+        self.key = key
+        return key
 
-    def set_aes(self, key, nonce):
-        self.aes = AES.new(key, AES.MODE_EAX, nonce=nonce)
+    def set_aes(self, key):
+        self.key = key
 
     def aes_encrypt(self, data):
-        return b"".join(self.aes.encrypt_and_digest(data))
+        aes = AES.new(self.key, AES.MODE_EAX)
+        data, tag = aes.encrypt_and_digest(data)
+        return data + aes.nonce
 
     def aes_decrypt(self, data):
-        # self.aes.verify(tag)
-        return self.aes.decrypt(data[:-16])
+        aes = AES.new(self.key, AES.MODE_EAX, nonce=data[-16:])
+        return aes.decrypt(data[:-16])
 
 
 class StartForm(QWidget):
@@ -64,54 +70,102 @@ class StartForm(QWidget):
         self.loading.loaded.connect(self.draw_main_form)
         self.loading.start()
 
-    def draw_main_form(self, sock, encryption):
-        self.main_form = MainForm(sock, encryption)
+    def draw_main_form(self, sock, encryption, serial):
+        self.main_form = MainForm(sock, encryption, serial)
         self.main_form.show()
         self.hide()
 
 
 class Loading(QThread):
-    loaded = pyqtSignal(socket.socket, Encryptor)
+    loaded = pyqtSignal(socket.socket, Encryptor, Serial)
 
     def run(self):
         sock, encryption = self.keys_exchange()
+        serial = self.detect_port()
+        if not os.path.exists("files"):
+            os.makedirs("files")
 
-        self.loaded.emit(sock, encryption)
+        self.loaded.emit(sock, encryption, serial)
 
     def keys_exchange(self):
         sock = socket.socket()
         sock.connect((SERVER_IP, SERVER_PORT))
 
         encryption = Encryptor()
-        key, nonce = encryption.create_aes()
+        key = encryption.create_aes()
 
         encryption.set_rsa_pub_key(sock.recv(1024))
 
-        sock.send(encryption.rsa_encrypt(key + nonce))
+        sock.send(encryption.rsa_encrypt(key))
 
         sock.recv(1024)
 
         return sock, encryption
 
+    def detect_port(self):
+        serial = Serial(baudrate=115200, timeout=3)
+        for port in list_ports.comports():
+            serial.setPort(port.device)
+            serial.open()
+
+            time.sleep(2)
+            serial.write(b"3")
+            if serial.readline() == b"GOOD\r\n":
+                return serial
+            serial.close()
+
 
 class MainForm(QMainWindow):
-    def __init__(self, sock, encryption):
+    def __init__(self, sock, encryption, serial):
         super().__init__()
         self.sock = sock
         self.encryption = encryption
+        self.serial = serial
         uic.loadUi("MainForm.ui", self)
 
-        self.menuFile.addAction("Open")
+        self.menuFile.addAction("Open", self.open_enc_file, "Ctrl+O")
         self.menuFile.addAction("Open Recent")
         self.menuFile.addAction("Save")
-        self.menuFile.addAction("Add File", self.add_file, "CTRL+N")
+        self.menuFile.addAction("Add File", self.add_file, "Ctrl+N")
         self.menuFile.addSeparator()
         self.menuFile.addAction('Settings')
         self.menuFile.addAction('Exit')
 
+        self.open_enc_file_btn.clicked.connect(self.open_enc_file)
+        self.open_btn.clicked.connect(self.open_file)
+
+
     def add_file(self):
         self.new_file = NewFileForm(self.sock, self.encryption)
         self.new_file.show()
+
+    def open_file(self):
+        print(self.file)
+        os.system('"{}"'.format(self.file))
+
+    def save_file(self):
+        pass
+
+    def open_enc_file(self):
+        file = QFileDialog.getOpenFileName(self, "Выберите файл",
+                                           filter="*.enc")[0]
+        self.checking_form = CheckingForm()
+        self.checking_form.show()
+
+        self.checking = CheckingKey(self.sock, self.encryption,
+                                    self.serial, file)
+        self.checking.checked.connect(self.open)
+        self.checking.start()
+
+    def open(self, state, file):
+        self.file = file
+        if state:
+            self.checking_form.status_lbl.setText("Access Granted")
+            file_data = open(file, "rb")
+            self.preview.setPlainText(str(file_data.read()))
+            file_data.close()
+        else:
+            self.checking_form.status_lbl.setText("Access Denied")
 
 
 class NewFileForm(QWidget):
@@ -138,7 +192,7 @@ class NewFileForm(QWidget):
     def ok(self):
         short_name = self.input_edt.text().split("/")[-1]
         file_enc = Encryptor()
-        key = b"".join(file_enc.create_aes())
+        key = file_enc.create_aes()
         input = open(self.input_edt.text(), "rb")
         encrypted_file = file_enc.aes_encrypt(input.read())
         hash = hashlib.sha256(encrypted_file).hexdigest()
@@ -153,6 +207,59 @@ class NewFileForm(QWidget):
         output = open(self.output_edt.text(), "wb")
         output.write(encrypted_file)
         output.close()
+
+        msg = QMessageBox(QMessageBox.Information,
+                          "RFIDLC",
+                          "File was added successfully")
+        msg.exec_()
+        self.hide()
+
+
+class CheckingForm(QWidget):
+    def __init__(self):
+        super().__init__()
+        uic.loadUi("CheckingForm.ui", self)
+
+
+class CheckingKey(QThread):
+    checked = pyqtSignal(bool, str)
+    def __init__(self, sock, encryption, serial, file):
+        super().__init__()
+        self.sock = sock
+        self.encryption = encryption
+        self.serial = serial
+        self.file = file
+
+    def run(self):
+        self.serial.flushInput()
+        self.serial.timeout = None
+        user_key = self.serial.readline().decode().strip()
+
+        file = open(self.file, "rb")
+        file_data = file.read()
+        file.close()
+        hash = hashlib.sha256(file_data).hexdigest()
+
+        data = b":".join((b"1",
+                         user_key.encode(),
+                         hash.encode()))
+        self.sock.send(self.encryption.aes_encrypt(data))
+
+        resp = self.encryption.aes_decrypt(self.sock.recv(2048))
+        if resp != b"err":
+            self.serial.write(b"1")
+            file_name, *file_key = resp.split(b":")
+            file_key = b"".join(file_key)
+            file_enc = Encryptor()
+            file_enc.set_aes(file_key)
+            file = open("files/{}".format(file_name.decode()), "wb")
+            file.write(file_enc.aes_decrypt(file_data))
+            file.close()
+            self.checked.emit(True, os.path.abspath(file.name))
+        else:
+            self.serial.write(b"2")
+            self.checked.emit(False, "")
+
 
 
 if __name__ == "__main__":

@@ -11,7 +11,7 @@ class Encryptor:
     def __init__(self):
         self.public_key = None
         self.private_key = None
-        self.aes = None
+        self.key = None
 
     def set_rsa_pub_key(self, key):
         self.public_key = rsa.PublicKey.load_pkcs1(key)
@@ -28,18 +28,20 @@ class Encryptor:
 
     def create_aes(self, size=24):
         key = Random.new().read(size)
-        self.aes = AES.new(key, AES.MODE_EAX)
-        return key, self.aes.nonce
+        self.key = key
+        return key
 
-    def set_aes(self, key, nonce):
-        self.aes = AES.new(key, AES.MODE_EAX, nonce=nonce)
+    def set_aes(self, key):
+        self.key = key
 
     def aes_encrypt(self, data):
-        return "".join(self.aes.encrypt_and_digest(data))
+        aes = AES.new(self.key, AES.MODE_EAX)
+        data, tag = aes.encrypt_and_digest(data)
+        return data + aes.nonce
 
     def aes_decrypt(self, data):
-        # self.aes.verify(tag)
-        return self.aes.decrypt(data[:-16])
+        aes = AES.new(self.key, AES.MODE_EAX, nonce=data[-16:])
+        return aes.decrypt(data[:-16])
 
 async def handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter, *args):
     addr = writer.get_extra_info("peername")
@@ -51,10 +53,10 @@ async def handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter, *a
     writer.write(pub)
     await writer.drain()
 
-    aes_data = encryption.rsa_decrypt(await reader.read(1024))
-    encryption.set_aes(aes_data[:-16], aes_data[-16:])
+    aes_key = encryption.rsa_decrypt(await reader.read(1024))
+    encryption.set_aes(aes_key)
 
-    writer.write(b"ok")
+    writer.write(encryption.aes_encrypt(b"ok"))
     await writer.drain()
 
     db_conn = sqlite3.connect("db.sqlite")
@@ -74,8 +76,22 @@ async def handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter, *a
                                    hash.decode(),
                                    level.decode(),
                                    key))
-
-            db_conn.commit()
+                db_conn.commit()
+                writer.write(encryption.aes_encrypt(b"ok"))
+                await writer.drain()
+            elif data[0] == "1".encode()[0]:
+                type, key, hash = data.split(b":")
+                qu = """SELECT FileName, Key FROM Files WHERE Hash = ?
+ AND AccessLvl <= (SELECT AccessLvl From Users WHERE Keys = ?)"""
+                res = db_cursor.execute(qu, (hash.decode(),
+                                             key.decode())).fetchone()
+                if res:
+                    file_name, file_key = res
+                    resp = b":".join((file_name.encode(), file_key))
+                    writer.write(encryption.aes_encrypt(resp))
+                    await writer.drain()
+                else:
+                    writer.write(encryption.aes_encrypt(b"err"))
 
     writer.close()
 
@@ -86,6 +102,7 @@ if __name__ == "__main__":
     server = loop.run_until_complete(connection)
 
     try:
+        print("The server is running.")
         loop.run_forever()
     except KeyboardInterrupt:
         print("Closing...")
