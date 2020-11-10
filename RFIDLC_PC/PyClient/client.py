@@ -84,6 +84,7 @@ class Loading(QThread):
         serial = self.detect_port()
         if not os.path.exists("files"):
             os.makedirs("files")
+        open("recents.list", "w").close()
 
         self.loaded.emit(sock, encryption, serial)
 
@@ -134,6 +135,8 @@ class MainForm(QMainWindow):
         self.open_enc_file_btn.clicked.connect(self.open_enc_file)
         self.open_btn.clicked.connect(self.open_file)
 
+        self.update_recent()
+
 
     def add_file(self):
         self.new_file = NewFileForm(self.sock, self.encryption)
@@ -158,6 +161,7 @@ class MainForm(QMainWindow):
         self.checking.start()
 
     def open(self, state, file):
+        self.add_recent(file)
         self.file = file
         if state:
             self.checking_form.status_lbl.setText("Access Granted")
@@ -166,6 +170,18 @@ class MainForm(QMainWindow):
             file_data.close()
         else:
             self.checking_form.status_lbl.setText("Access Denied")
+
+    def update_recent(self):
+        rec = open("recents.list", "r")
+        self.recent_list.addItems(map(str.strip, rec.readlines()))
+        rec.close()
+
+    def add_recent(self, file):
+        rec = open("recents.list", "a")
+        rec.write(os.path.abspath(file) + "\n")
+        rec.close()
+
+        self.update_recent()
 
 
 class NewFileForm(QWidget):
