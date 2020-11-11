@@ -84,7 +84,7 @@ class Loading(QThread):
         serial = self.detect_port()
         if not os.path.exists("files"):
             os.makedirs("files")
-        open("recents.list", "w").close()
+        open("recents.list", "a+")
 
         self.loaded.emit(sock, encryption, serial)
 
@@ -112,6 +112,7 @@ class Loading(QThread):
             time.sleep(2)
             serial.write(b"3")
             if serial.readline() == b"GOOD\r\n":
+                print("detected on {}".format(port.device))
                 return serial
             serial.close()
 
@@ -140,11 +141,12 @@ class MainForm(QMainWindow):
 
     def add_file(self):
         self.new_file = NewFileForm(self.sock, self.encryption)
+        self.new_file.added.connect(self.added)
         self.new_file.show()
 
     def open_file(self):
-        print(self.file)
-        os.system('"{}"'.format(self.file))
+        self.open_external = OpenExternal(self.file)
+        self.open_external.start()
 
     def save_file(self):
         pass
@@ -157,11 +159,14 @@ class MainForm(QMainWindow):
 
         self.checking = CheckingKey(self.sock, self.encryption,
                                     self.serial, file)
-        self.checking.checked.connect(self.open)
+        self.checking.checked.connect(self.opened)
         self.checking.start()
-
-    def open(self, state, file):
         self.add_recent(file)
+
+    def added(self, file):
+        self.add_recent(file)
+
+    def opened(self, state, file):
         self.file = file
         if state:
             self.checking_form.status_lbl.setText("Access Granted")
@@ -173,18 +178,32 @@ class MainForm(QMainWindow):
 
     def update_recent(self):
         rec = open("recents.list", "r")
-        self.recent_list.addItems(map(str.strip, rec.readlines()))
+        self.recent_list.clear()
+        self.recent_list.addItems(map(str.strip, rec.readlines()[::-1]))
         rec.close()
 
     def add_recent(self, file):
-        rec = open("recents.list", "a")
-        rec.write(os.path.abspath(file) + "\n")
+        rec = open("recents.list", "a+")
+        recents = rec.readlines()
+        path = os.path.abspath(file) + "\n"
+        rec.write(path)
         rec.close()
 
         self.update_recent()
 
 
+class OpenExternal(QThread):
+    def __init__(self, file):
+        self.file = file
+        super().__init__()
+
+    def run(self):
+        os.system('"{}"'.format(self.file))
+
+
 class NewFileForm(QWidget):
+    added = pyqtSignal(str)
+
     def __init__(self, sock, encryption):
         super().__init__()
         self.sock = sock
@@ -229,6 +248,7 @@ class NewFileForm(QWidget):
                           "File was added successfully")
         msg.exec_()
         self.hide()
+        self.added.emit(os.path.abspath(self.output_edt.text()))
 
 
 class CheckingForm(QWidget):
