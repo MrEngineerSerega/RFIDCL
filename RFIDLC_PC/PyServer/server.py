@@ -43,57 +43,65 @@ class Encryptor:
         aes = AES.new(self.key, AES.MODE_EAX, nonce=data[-16:])
         return aes.decrypt(data[:-16])
 
-async def handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter, *args):
-    addr = writer.get_extra_info("peername")
-    print("Incoming connection from: {}:{}".format(addr[0], addr[1]))
+async def handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+    try:
+        addr = writer.get_extra_info("peername")
+        print("Incoming connection from: {}:{}".format(addr[0], addr[1]))
 
-    encryption = Encryptor()
-    pub = encryption.create_rsa_pair()
+        encryption = Encryptor()
+        pub = encryption.create_rsa_pair()
 
-    writer.write(pub)
-    await writer.drain()
+        writer.write(pub)
+        await writer.drain()
 
-    aes_key = encryption.rsa_decrypt(await reader.read(1024))
-    encryption.set_aes(aes_key)
+        aes_key = encryption.rsa_decrypt(await reader.read(1024))
+        encryption.set_aes(aes_key)
 
-    writer.write(encryption.aes_encrypt(b"ok"))
-    await writer.drain()
+        writer.write(encryption.aes_encrypt(b"ok"))
+        await writer.drain()
 
-    db_conn = sqlite3.connect("db.sqlite")
-    db_cursor = db_conn.cursor()
+        db_conn = sqlite3.connect("db.sqlite")
+        db_cursor = db_conn.cursor()
 
-    while True:
-        data = encryption.aes_decrypt(await reader.read(4096))
-        if data:
-            if data[0] == "0".encode()[0]:
-                type, short_name, *key, level, hash = data.split(b":")
-                key = b"".join(key)
+        while True:
+            req = await reader.read(4096)
+            if not req:
+                raise ConnectionResetError
+            data = encryption.aes_decrypt(req)
+            if data:
+                if data[0] == "0".encode()[0]:
+                    type, short_name, *key, level, hash = data.split(b":")
+                    key = b"".join(key)
 
-                db_cursor.execute("INSERT INTO Files "
-                                  "(FileName, Hash, AccessLvl, Key) "
-                                  "VALUES (?, ?, ?, ?)",
-                                  (short_name.decode(),
-                                   hash.decode(),
-                                   level.decode(),
-                                   key))
-                db_conn.commit()
-                writer.write(encryption.aes_encrypt(b"ok"))
-                await writer.drain()
-            elif data[0] == "1".encode()[0]:
-                type, key, hash = data.split(b":")
-                qu = """SELECT FileName, Key FROM Files WHERE Hash = ?
- AND AccessLvl <= (SELECT AccessLvl From Users WHERE Keys = ?)"""
-                res = db_cursor.execute(qu, (hash.decode(),
-                                             key.decode())).fetchone()
-                if res:
-                    file_name, file_key = res
-                    resp = b":".join((file_name.encode(), file_key))
-                    writer.write(encryption.aes_encrypt(resp))
+                    db_cursor.execute("INSERT INTO Files "
+                                      "(FileName, Hash, AccessLvl, Key) "
+                                      "VALUES (?, ?, ?, ?)",
+                                      (short_name.decode(),
+                                       hash.decode(),
+                                       level.decode(),
+                                       key))
+                    db_conn.commit()
+                    writer.write(encryption.aes_encrypt(b"ok"))
                     await writer.drain()
-                else:
-                    writer.write(encryption.aes_encrypt(b"err"))
+                elif data[0] == "1".encode()[0]:
+                    type, key, hash = data.split(b":")
+                    qu = """SELECT FileName, Key FROM Files WHERE Hash = ?
+     AND AccessLvl <= (SELECT AccessLvl From Users WHERE Keys = ?)"""
+                    res = db_cursor.execute(qu, (hash.decode(),
+                                                 key.decode())).fetchone()
+                    if res:
+                        file_name, file_key = res
+                        resp = b":".join((file_name.encode(), file_key))
+                        writer.write(encryption.aes_encrypt(resp))
+                        await writer.drain()
+                    else:
+                        writer.write(encryption.aes_encrypt(b"err"))
 
-    writer.close()
+        writer.close()
+    except ConnectionResetError as err:
+        addr = writer.get_extra_info("peername")
+        print("Connection closed: {}:{}".format(addr[0], addr[1]))
+        writer.close()
 
 
 if __name__ == "__main__":

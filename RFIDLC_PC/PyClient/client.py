@@ -61,13 +61,14 @@ class StartForm(QWidget):
         super().__init__()
         uic.loadUi("StartForm.ui", self)
 
-        anim = QMovie("media\waiting.gif")
+        anim = QMovie("media/waiting.gif")
         self.label.setMovie(anim)
         anim.start()
         self.show()
 
         self.loading = Loading()
         self.loading.loaded.connect(self.draw_main_form)
+        self.loading.failed.connect(self.failed)
         self.loading.start()
 
     def draw_main_form(self, sock, encryption, serial):
@@ -75,18 +76,32 @@ class StartForm(QWidget):
         self.main_form.show()
         self.hide()
 
+    def failed(self, msg):
+        QMessageBox(QMessageBox.Information, "RFIDLC", msg).exec_()
+        sys.exit()
+
 
 class Loading(QThread):
     loaded = pyqtSignal(socket.socket, Encryptor, Serial)
+    failed = pyqtSignal(str)
 
     def run(self):
-        sock, encryption = self.keys_exchange()
-        serial = self.detect_port()
-        if not os.path.exists("files"):
-            os.makedirs("files")
-        open("recents.list", "a+")
+        try:
+            sock, encryption = self.keys_exchange()
+            serial = self.detect_port()
+            if not os.path.exists("files"):
+                os.makedirs("files")
+            open("recents.list", "a+")
 
-        self.loaded.emit(sock, encryption, serial)
+            if not serial:
+                raise ValueError
+
+            self.loaded.emit(sock, encryption, serial)
+        except ConnectionRefusedError:
+            self.failed.emit("Failed to connect to server")
+        except ValueError:
+            self.failed.emit("Сould not find the reader")
+
 
     def keys_exchange(self):
         sock = socket.socket()
@@ -126,15 +141,14 @@ class MainForm(QMainWindow):
         uic.loadUi("MainForm.ui", self)
 
         self.menuFile.addAction("Open", self.open_enc_file, "Ctrl+O")
-        self.menuFile.addAction("Open Recent")
-        self.menuFile.addAction("Save")
         self.menuFile.addAction("Add File", self.add_file, "Ctrl+N")
         self.menuFile.addSeparator()
-        self.menuFile.addAction('Settings')
-        self.menuFile.addAction('Exit')
+        self.menuFile.addAction('Exit', sys.exit)
 
+        self.add_file_btn.clicked.connect(self.add_file)
         self.open_enc_file_btn.clicked.connect(self.open_enc_file)
         self.open_btn.clicked.connect(self.open_file)
+        self.recent_list.itemDoubleClicked.connect(self.open_selected_file)
 
         self.update_recent()
 
@@ -148,18 +162,35 @@ class MainForm(QMainWindow):
         self.open_external = OpenExternal(self.file)
         self.open_external.start()
 
-    def save_file(self):
-        pass
-
     def open_enc_file(self):
-        file = QFileDialog.getOpenFileName(self, "Выберите файл",
-                                           filter="*.enc")[0]
+        try:
+            file = QFileDialog.getOpenFileName(self, "Выберите файл",
+                                               filter="*.enc")[0]
+            if not file:
+                raise ValueError
+
+            self.checking_form = CheckingForm()
+            self.checking_form.show()
+
+            self.checking = CheckingKey(self.sock, self.encryption,
+                                        self.serial, file)
+            self.checking.checked.connect(self.opened)
+            self.checking_form.closed.connect(self.close_checking)
+            self.checking.start()
+            self.add_recent(file)
+        except ValueError:
+            pass
+
+    def open_selected_file(self, item):
+        file = item.text()
+
         self.checking_form = CheckingForm()
         self.checking_form.show()
 
         self.checking = CheckingKey(self.sock, self.encryption,
                                     self.serial, file)
         self.checking.checked.connect(self.opened)
+        self.checking_form.closed.connect(self.close_checking)
         self.checking.start()
         self.add_recent(file)
 
@@ -171,10 +202,18 @@ class MainForm(QMainWindow):
         if state:
             self.checking_form.status_lbl.setText("Access Granted")
             file_data = open(file, "rb")
-            self.preview.setPlainText(str(file_data.read()))
+            try:
+                self.preview.setPlainText(file_data.read().decode())
+            except UnicodeDecodeError:
+                self.preview.setPlainText(str(file_data.read()))
             file_data.close()
+            self.open_btn.setEnabled(True)
         else:
             self.checking_form.status_lbl.setText("Access Denied")
+            self.checking.start()
+
+    def close_checking(self):
+        self.checking.terminate()
 
     def update_recent(self):
         rec = open("recents.list", "r")
@@ -225,36 +264,48 @@ class NewFileForm(QWidget):
         self.output_edt.setText(filename)
 
     def ok(self):
-        short_name = self.input_edt.text().split("/")[-1]
-        file_enc = Encryptor()
-        key = file_enc.create_aes()
-        input = open(self.input_edt.text(), "rb")
-        encrypted_file = file_enc.aes_encrypt(input.read())
-        hash = hashlib.sha256(encrypted_file).hexdigest()
-        input.close()
-        data = b":".join((b"0",
-                          short_name.encode(),
-                          key,
-                          str(self.lvl_spin.value()).encode(),
-                          hash.encode()))
-        self.sock.send(self.encryption.aes_encrypt(data))
+        try:
+            short_name = self.input_edt.text().split("/")[-1]
+            file_enc = Encryptor()
+            key = file_enc.create_aes()
+            input = open(self.input_edt.text(), "rb")
+            encrypted_file = file_enc.aes_encrypt(input.read())
+            hash = hashlib.sha256(encrypted_file).hexdigest()
+            input.close()
+            data = b":".join((b"0",
+                              short_name.encode(),
+                              key,
+                              str(self.lvl_spin.value()).encode(),
+                              hash.encode()))
+            self.sock.send(self.encryption.aes_encrypt(data))
 
-        output = open(self.output_edt.text(), "wb")
-        output.write(encrypted_file)
-        output.close()
+            self.sock.recv(1024)
 
-        msg = QMessageBox(QMessageBox.Information,
-                          "RFIDLC",
-                          "File was added successfully")
-        msg.exec_()
-        self.hide()
-        self.added.emit(os.path.abspath(self.output_edt.text()))
+            output = open(self.output_edt.text(), "wb")
+            output.write(encrypted_file)
+            output.close()
+
+            msg = QMessageBox(QMessageBox.Information,
+                              "RFIDLC",
+                              "File was added successfully")
+            msg.exec_()
+            self.hide()
+            self.added.emit(os.path.abspath(self.output_edt.text()))
+        except FileNotFoundError:
+            msg = "File not found"
+            QMessageBox(QMessageBox.Information, "RFIDLC", msg).exec_()
 
 
 class CheckingForm(QWidget):
+    closed = pyqtSignal()
+
     def __init__(self):
         super().__init__()
         uic.loadUi("CheckingForm.ui", self)
+
+    def closeEvent(self, arg):
+        print(arg)
+        self.closed.emit()
 
 
 class CheckingKey(QThread):
@@ -295,7 +346,6 @@ class CheckingKey(QThread):
         else:
             self.serial.write(b"2")
             self.checked.emit(False, "")
-
 
 
 if __name__ == "__main__":

@@ -33,11 +33,22 @@
        <widget class="QListWidget" name="recent_list"/>
       </item>
       <item>
-       <widget class="QPushButton" name="open_enc_file_btn">
-        <property name="text">
-         <string>Open other file</string>
-        </property>
-       </widget>
+       <layout class="QHBoxLayout" name="horizontalLayout_3">
+        <item>
+         <widget class="QPushButton" name="add_file_btn">
+          <property name="text">
+           <string>Add file</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QPushButton" name="open_enc_file_btn">
+          <property name="text">
+           <string>Open other file</string>
+          </property>
+         </widget>
+        </item>
+       </layout>
       </item>
      </layout>
     </item>
@@ -56,14 +67,10 @@
       <item>
        <layout class="QHBoxLayout" name="horizontalLayout">
         <item>
-         <widget class="QPushButton" name="save_btn">
-          <property name="text">
-           <string>Save and Close</string>
-          </property>
-         </widget>
-        </item>
-        <item>
          <widget class="QPushButton" name="open_btn">
+          <property name="enabled">
+           <bool>false</bool>
+          </property>
           <property name="text">
            <string>Open</string>
           </property>
