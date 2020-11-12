@@ -8,42 +8,52 @@ PORT = 8888
 
 
 class Encryptor:
+    """Class of encryption and decryption"""
     def __init__(self):
         self.public_key = None
         self.private_key = None
         self.key = None
 
     def set_rsa_pub_key(self, key):
+        """Sets rsa public key"""
         self.public_key = rsa.PublicKey.load_pkcs1(key)
 
     def create_rsa_pair(self, size=512):
+        """Creates rsa pair keys, long = size"""
         self.public_key, self.private_key = rsa.newkeys(size)
         return self.public_key.save_pkcs1()
 
     def rsa_encrypt(self, data: bytes):
+        """Encrypts the data using rsa"""
         return rsa.encrypt(data, self.public_key)
 
     def rsa_decrypt(self, data: bytes):
+        """Decrypts the data using rsa"""
         return rsa.decrypt(data, self.private_key)
 
     def create_aes(self, size=24):
+        """Creates aes keyq, long = size"""
         key = Random.new().read(size)
         self.key = key
         return key
 
     def set_aes(self, key):
+        """Sets aes key"""
         self.key = key
 
     def aes_encrypt(self, data):
+        """Encryptes the data using aes"""
         aes = AES.new(self.key, AES.MODE_EAX)
         data, tag = aes.encrypt_and_digest(data)
         return data + aes.nonce
 
     def aes_decrypt(self, data):
+        """Decrypts the data using rsa"""
         aes = AES.new(self.key, AES.MODE_EAX, nonce=data[-16:])
         return aes.decrypt(data[:-16])
 
 async def handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+    """Client handler"""
     try:
         addr = writer.get_extra_info("peername")
         print("Incoming connection from: {}:{}".format(addr[0], addr[1]))
@@ -71,7 +81,7 @@ async def handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
             if data:
                 if data[0] == "0".encode()[0]:
                     type, short_name, *key, level, hash = data.split(b":")
-                    key = b"".join(key)
+                    key = b":".join(key)
 
                     db_cursor.execute("INSERT INTO Files "
                                       "(FileName, Hash, AccessLvl, Key) "

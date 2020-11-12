@@ -20,38 +20,47 @@ SERVER_PORT = 8888
 
 
 class Encryptor:
+    """Class of encryption and decryption"""
     def __init__(self):
         self.public_key = None
         self.private_key = None
         self.key = None
 
     def set_rsa_pub_key(self, key):
+        """Sets rsa public key"""
         self.public_key = rsa.PublicKey.load_pkcs1(key)
 
     def create_rsa_pair(self, size=512):
+        """Creates rsa pair keys, long = size"""
         self.public_key, self.private_key = rsa.newkeys(size)
         return self.public_key.save_pkcs1()
 
     def rsa_encrypt(self, data: bytes):
+        """Encrypts the data using rsa"""
         return rsa.encrypt(data, self.public_key)
 
     def rsa_decrypt(self, data: bytes):
+        """Decrypts the data using rsa"""
         return rsa.decrypt(data, self.private_key)
 
     def create_aes(self, size=24):
+        """Creates aes keyq, long = size"""
         key = Random.new().read(size)
         self.key = key
         return key
 
     def set_aes(self, key):
+        """Sets aes key"""
         self.key = key
 
     def aes_encrypt(self, data):
+        """Encryptes the data using aes"""
         aes = AES.new(self.key, AES.MODE_EAX)
         data, tag = aes.encrypt_and_digest(data)
         return data + aes.nonce
 
     def aes_decrypt(self, data):
+        """Decrypts the data using rsa"""
         aes = AES.new(self.key, AES.MODE_EAX, nonce=data[-16:])
         return aes.decrypt(data[:-16])
 
@@ -72,16 +81,19 @@ class StartForm(QWidget):
         self.loading.start()
 
     def draw_main_form(self, sock, encryption, serial):
+        """Opens the main form"""
         self.main_form = MainForm(sock, encryption, serial)
         self.main_form.show()
         self.hide()
 
     def failed(self, msg):
+        """Shows the error msg"""
         QMessageBox(QMessageBox.Information, "RFIDLC", msg).exec_()
         sys.exit()
 
 
 class Loading(QThread):
+    """Thread of loading"""
     loaded = pyqtSignal(socket.socket, Encryptor, Serial)
     failed = pyqtSignal(str)
 
@@ -104,6 +116,7 @@ class Loading(QThread):
 
 
     def keys_exchange(self):
+        """Cryptography keys exchange"""
         sock = socket.socket()
         sock.connect((SERVER_IP, SERVER_PORT))
 
@@ -119,6 +132,7 @@ class Loading(QThread):
         return sock, encryption
 
     def detect_port(self):
+        """Searching the port of the reader"""
         serial = Serial(baudrate=115200, timeout=3)
         for port in list_ports.comports():
             serial.setPort(port.device)
@@ -154,15 +168,18 @@ class MainForm(QMainWindow):
 
 
     def add_file(self):
+        """Opens form of adding file"""
         self.new_file = NewFileForm(self.sock, self.encryption)
         self.new_file.added.connect(self.added)
         self.new_file.show()
 
     def open_file(self):
+        """Opens file"""
         self.open_external = OpenExternal(self.file)
         self.open_external.start()
 
     def open_enc_file(self):
+        """Opens encypted file"""
         try:
             file = QFileDialog.getOpenFileName(self, "Выберите файл",
                                                filter="*.enc")[0]
@@ -182,6 +199,7 @@ class MainForm(QMainWindow):
             pass
 
     def open_selected_file(self, item):
+        """Opens selected in list file"""
         file = item.text()
 
         self.checking_form = CheckingForm()
@@ -195,9 +213,11 @@ class MainForm(QMainWindow):
         self.add_recent(file)
 
     def added(self, file):
+        """Adds file to recent list"""
         self.add_recent(file)
 
     def opened(self, state, file):
+        """Setts status of opening file"""
         self.file = file
         if state:
             self.checking_form.status_lbl.setText("Access Granted")
@@ -213,15 +233,18 @@ class MainForm(QMainWindow):
             self.checking.start()
 
     def close_checking(self):
+        """Closes checking key thread"""
         self.checking.terminate()
 
     def update_recent(self):
+        """Updates recent list"""
         rec = open("recents.list", "r")
         self.recent_list.clear()
         self.recent_list.addItems(map(str.strip, rec.readlines()[::-1]))
         rec.close()
 
     def add_recent(self, file):
+        """Adds file to recent list"""
         rec = open("recents.list", "a+")
         recents = rec.readlines()
         path = os.path.abspath(file) + "\n"
@@ -232,6 +255,7 @@ class MainForm(QMainWindow):
 
 
 class OpenExternal(QThread):
+    """Open file thread"""
     def __init__(self, file):
         self.file = file
         super().__init__()
@@ -264,6 +288,7 @@ class NewFileForm(QWidget):
         self.output_edt.setText(filename)
 
     def ok(self):
+        """Adds new file"""
         try:
             short_name = self.input_edt.text().split("/")[-1]
             file_enc = Encryptor()
@@ -304,11 +329,11 @@ class CheckingForm(QWidget):
         uic.loadUi("CheckingForm.ui", self)
 
     def closeEvent(self, arg):
-        print(arg)
         self.closed.emit()
 
 
 class CheckingKey(QThread):
+    """Thread of opening file"""
     checked = pyqtSignal(bool, str)
     def __init__(self, sock, encryption, serial, file):
         super().__init__()
