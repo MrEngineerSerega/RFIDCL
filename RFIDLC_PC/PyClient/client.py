@@ -100,13 +100,16 @@ class Loading(QThread):
     def run(self):
         try:
             sock, encryption = self.keys_exchange()
+
             serial = self.detect_port()
+            if not serial:
+                raise ValueError
+
             if not os.path.exists("files"):
                 os.makedirs("files")
             open("recents.list", "a+")
 
-            if not serial:
-                raise ValueError
+
 
             self.loaded.emit(sock, encryption, serial)
         except ConnectionRefusedError:
@@ -202,6 +205,7 @@ class MainForm(QMainWindow):
         """Opens selected in list file"""
         file = item.text()
 
+
         self.checking_form = CheckingForm()
         self.checking_form.show()
 
@@ -230,6 +234,7 @@ class MainForm(QMainWindow):
             self.open_btn.setEnabled(True)
         else:
             self.checking_form.status_lbl.setText("Access Denied")
+
             self.checking.start()
 
     def close_checking(self):
@@ -245,10 +250,18 @@ class MainForm(QMainWindow):
 
     def add_recent(self, file):
         """Adds file to recent list"""
-        rec = open("recents.list", "a+")
+        rec = open("recents.list", "r")
         recents = rec.readlines()
+        rec.close()
+
+        rec = open("recents.list", "w")
         path = os.path.abspath(file) + "\n"
-        rec.write(path)
+        try:
+            recents.remove(path)
+        except ValueError:
+            pass
+        recents.append(path)
+        rec.writelines(recents)
         rec.close()
 
         self.update_recent()
